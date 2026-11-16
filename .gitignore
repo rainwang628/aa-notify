@@ -1,0 +1,10 @@
+# 真实配置与运行时文件，均不入库（仓库只保留 config.example.json）
+config.json
+state.json
+aa-notify.log
+aa-notify.log.*
+__pycache__/
+*.pyc
+
+# 运行时进程锁
+*.lock

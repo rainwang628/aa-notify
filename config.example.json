@@ -1,0 +1,28 @@
+{
+  "channel": "pushplus",
+  "pushplusToken": "",
+  "wxpusher": {
+    "appToken": "",
+    "uids": []
+  },
+  "serverChanKey": "",
+  "linkBase": "https://web.agents-anywhere.com",
+  "pollSeconds": 20,
+  "events": {
+    "approval": true,
+    "completed": true,
+    "error": true
+  },
+  "dedupeSeconds": 120,
+  "maxPerHour": 30,
+  "quietHours": {
+    "start": "00:00",
+    "end": "08:00"
+  },
+  "idleStopMinutes": 0,
+  "dormantPollSeconds": 300,
+  "onlyWhenAway": {
+    "enabled": true,
+    "idleSeconds": 180
+  }
+}
