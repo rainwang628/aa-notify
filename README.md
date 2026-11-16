@@ -47,7 +47,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rain.aa-notify.plist
 launchctl kickstart -k gui/$(id -u)/com.rain.aa-notify
 ```
 
-plist 在部署根 `~/rain/projs/services/aa-notify/` 里（含绝对路径，属机器本地配置）。
+plist 在部署根 `~/rain/projs/services/aa-notify/` 里。
 
 ## 部署与文件归属
 
