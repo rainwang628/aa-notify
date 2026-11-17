@@ -18,6 +18,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -35,13 +36,16 @@ LEVELDB_DIR = os.path.join(AA_SUPPORT, "Local Storage", "leveldb")
 SERVER = "https://web.agents-anywhere.com"
 UA = "aa-notify/1.0"
 
+# 统一推送后台（2026-11-17 起 channel=gateway 时使用）
+DEFAULT_NODE = "/Applications/DS Bot.app/Contents/Resources/primary-runtime/dependencies/node/bin/node"
+DEFAULT_GATEWAY_SCRIPT = os.path.expanduser("~/rain/projs/services/push-gateway/push.mjs")
+
 BUSY_STATUSES = {"running", "waiting", "pending", "stopping"}
 
 DEFAULT_CONFIG = {
-    "channel": "pushplus",
-    "pushplusToken": "",
-    "wxpusher": {"appToken": "", "uids": []},
-    "serverChanKey": "",
+    "channel": "gateway",
+    "gatewayScript": DEFAULT_GATEWAY_SCRIPT,
+    "gatewayNode": DEFAULT_NODE,
     "linkBase": "https://web.agents-anywhere.com",
     "pollSeconds": 20,
     "quietHours": {"start": "00:00", "end": "08:00"},
@@ -258,66 +262,44 @@ class Api:
         return self._projects.get(project_id, "")
 
 
+def session_handled(api: "Api", session_id: str) -> bool:
+    """用户是否已经把这条审批处理掉了。
+
+    不再 waiting_approval、也没有待响应的 notice 就算已处理；会话查不到（被关掉或清理）同样算已处理。
+    判断不了时调用方按「没处理」走——宁可多推一条，不漏推。
+    """
+    for session in api.sessions():
+        if session.get("id") == session_id:
+            if session.get("status") == "waiting_approval":
+                return False
+            return not api.open_notices(session_id)
+    return True
+
+
 # ---------------------------------------------------------------- 推送通道
 
 
-def http_post(url: str, payload: dict, form: bool = False) -> tuple[int, str]:
-    if form:
-        body = urllib.parse.urlencode(payload).encode("utf-8")
-        content_type = "application/x-www-form-urlencoded"
-    else:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        content_type = "application/json"
-    request = urllib.request.Request(
-        url, data=body, headers={"Content-Type": content_type, "User-Agent": UA}
-    )
+def send_push(config: dict, title: str, content: str, kind: str = "info",
+              cancel_if: str = "") -> tuple[bool, str]:
+    """统一推送后台：~/rain/projs/services/push-gateway/push.mjs。
+
+    approval / error → todo（先到通知栏，到点补微信；审批类带 cancel_if，处理掉就不补）
+    completed        → info（只到通知栏）
+    """
+    script = os.path.expanduser(str(config.get("gatewayScript") or DEFAULT_GATEWAY_SCRIPT))
+    node = str(config.get("gatewayNode") or DEFAULT_NODE)
+    push_kind = "todo" if kind in ("approval", "error") else "info"
+    command = [node, script, "--title", title, "--body", content, "--group", "aa", "--kind", push_kind]
+    if cancel_if:
+        command += ["--cancel-if", cancel_if]
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            return response.status, response.read().decode("utf-8", "replace")[:300]
-    except urllib.error.HTTPError as error:
-        return error.code, error.read().decode("utf-8", "replace")[:300]
-    except (urllib.error.URLError, TimeoutError) as error:
-        return 0, str(error)
-
-
-def send_push(config: dict, title: str, content: str) -> tuple[bool, str]:
-    channel = config.get("channel")
-    if channel == "pushplus":
-        token = config.get("pushplusToken")
-        if not token:
-            return False, "pushplusToken 未配置"
-        status, body = http_post(
-            "https://www.pushplus.plus/send",
-            {"token": token, "title": title, "content": content, "template": "txt"},
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=40,
         )
-        return status == 200 and '"code":200' in body.replace(" ", ""), body
-    if channel == "wxpusher":
-        app_token = (config.get("wxpusher") or {}).get("appToken")
-        uids = (config.get("wxpusher") or {}).get("uids") or []
-        if not app_token or not uids:
-            return False, "wxpusher appToken/uids 未配置"
-        status, body = http_post(
-            "https://wxpusher.zjiecode.com/api/send/message",
-            {
-                "appToken": app_token,
-                "content": content,
-                "summary": title,
-                "contentType": 1,
-                "uids": uids,
-            },
-        )
-        return status == 200 and '"code":1000' in body.replace(" ", ""), body
-    if channel == "serverchan":
-        key = config.get("serverChanKey")
-        if not key:
-            return False, "serverChanKey 未配置"
-        status, body = http_post(
-            "https://sctapi.ftqq.com/%s.send" % key,
-            {"title": title, "desp": content},
-            form=True,
-        )
-        return status == 200 and '"code":0' in body.replace(" ", ""), body
-    return False, "未知通道 %r" % channel
+    except (OSError, subprocess.SubprocessError) as error:
+        return False, "gateway 调用失败：%s" % error
+    detail = ((result.stdout or "") + (result.stderr or "")).strip()[:300]
+    return result.returncode == 0, detail
 
 
 # ---------------------------------------------------------------- 事件判定
@@ -391,16 +373,22 @@ def handle_event(api: Api, config: dict, state: dict, session: dict, kind: str) 
         detail = api.approval_detail(session_id)
         if detail:
             body_lines.append(detail)
-        body_lines.append("在微信里打开链接，登录后即可批准/拒绝")
+        body_lines.append("点开通知查看，登录后即可批准/拒绝（1 分钟内没处理会再用微信提醒一次）")
     body_lines.append(time.strftime("%H:%M:%S"))
     body_lines.append(link)
     body = "\n".join(line for line in body_lines if line)
 
+    cancel_if = ""
+    if kind == "approval":
+        # 到点补推前复查这条会话：用户已经在 AA 里补了授权，就别再补微信。
+        cancel_if = "%s %s --handled %s" % (
+            shlex.quote(sys.executable), shlex.quote(os.path.abspath(__file__)), shlex.quote(session_id),
+        )
     if config.get("_dry_run"):
-        log("[dry-run] %s | %s | %s" % (kind, title, (subject)))
+        log("[dry-run] %s | %s | %s | cancel_if=%s" % (kind, title, (subject), cancel_if or "-"))
         ok = True
     else:
-        ok, detail = send_push(config, title, body)
+        ok, detail = send_push(config, title, body, kind, cancel_if)
         log("%s推送 %s %s | %s" % ("已" if ok else "失败", kind, session_id, "" if ok else detail))
         if not ok:
             return False
@@ -508,7 +496,17 @@ def main() -> int:
     parser.add_argument("--config", default=os.path.join(HERE, "config.json"))
     parser.add_argument("--once", action="store_true", help="只轮询一次")
     parser.add_argument("--dry-run", action="store_true", help="只打印，不推送")
+    parser.add_argument("--handled", metavar="SESSION_ID",
+                        help="只判断这条会话是否已处理：退出 0 已处理、1 仍在等响应、2 查不到状态")
     args = parser.parse_args()
+
+    if args.handled:
+        # 供网关 --cancel-if 调用：只查一次，不抢服务的锁，也不推送。
+        try:
+            return 0 if session_handled(Api(), args.handled) else 1
+        except ApiError as error:
+            log("handled 判断失败：%s" % error)
+            return 2
 
     lock = open(LOCK_PATH, "w")
     try:

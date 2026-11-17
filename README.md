@@ -1,6 +1,6 @@
 # aa-notify
 
-把 Agents Anywhere 的会话事件推到微信。AA 的 iOS/Android/Web 端没有推送能力（上游 [#268](https://github.com/anywhere-labs/Agents-Anywhere/issues/268)），桌面端只有 Mac 本地通知；本服务补「人不在电脑前」这一段。
+把 Agents Anywhere 的会话事件推到手机：审批／出错先到 iPhone 通知栏，到点没处理再补一条微信；回合结束只进通知栏。AA 的 iOS/Android/Web 端没有推送能力（上游 [#268](https://github.com/anywhere-labs/Agents-Anywhere/issues/268)），桌面端只有 Mac 本地通知；本服务补「人不在电脑前」这一段。
 
 只读 AA 桌面端本地登录态，不改 AA 数据、不碰 connector；单文件 Python，无第三方依赖。
 
@@ -22,20 +22,22 @@
 cp config.example.json config.json
 ```
 
-`channel` 三选一：
+`channel` 只有 `gateway`（2026-11-17 起）：直连 PushPlus／wxpusher／serverchan 的旧通道已删除，凭据只留在推送网关一处。网关地址与 node 路径由 `gatewayScript`、`gatewayNode` 指定，默认指向 `~/rain/projs/services/push-gateway/push.mjs`。
 
-- `pushplus`：填 `pushplusToken`（[pushplus.plus](https://www.pushplus.plus) 微信扫码登录后复制 token），微信渠道免费。
-- `wxpusher`：填 `wxpusher.appToken` 和 `wxpusher.uids`（[wxpusher](https://wxpusher.zjiecode.com) 建应用 + 关注公众号拿 UID），永久免费。
-- `serverchan`：填 `serverChanKey`（[sct.ftqq.com](https://sct.ftqq.com) 微信扫码，SENDKEY 以 `SCT` 开头），免费 5 条/天。
+推送分两类（细节见 `~/rain/projs/agent-rules/docs/push-gateway.md`）：
 
-微信侧收到的都是公众号「服务通知」，不是聊天消息；点开正文里的链接可跳转控制台。
+- 审批／出错 → `todo`：先到 iPhone 通知栏，`escalate.ttlSeconds`（默认 60 秒）后补一条微信。
+- 回合结束 → `info`：只到通知栏，不进微信。
+
+**处理掉就不再催**：审批类推 `todo` 时自动带 `--cancel-if "aa_notify.py --handled <session-id>"`。到点补推前，网关跑这条命令复查会话状态：用户已经在 AA 里补了授权，命令退出 0，这次补推取消，只留通知栏那条。
 
 ## 运行
 
-**已部署**：2026-11-15，通道 `pushplus`，LaunchAgent `com.rain.aa-notify`（`RunAtLoad` + `KeepAlive`），日志见 `aa-notify.log`。
+**已部署**：LaunchAgent `com.rain.aa-notify`（`RunAtLoad` + `KeepAlive`），通道 `gateway`，日志见 `aa-notify.log`。
 
 ```bash
 /usr/bin/python3 aa_notify.py --once --dry-run   # 只打印，验证能读到会话
+/usr/bin/python3 aa_notify.py --handled <session-id>  # 只判断是否已处理：0 已处理 / 1 仍在等 / 2 查不到
 /usr/bin/python3 aa_notify.py                    # 前台常驻
 ```
 
@@ -67,7 +69,7 @@ cd ~/rain/projs && ./deploy.sh aa-notify
 
 ## 只在离开电脑时推
 
-`onlyWhenAway` 默认开启：发推送前读本机键鼠空闲时间（`ioreg` 的 `HIDIdleTime`），空闲不足 `idleSeconds`（默认 180 秒）就直接跳过——人在电脑前，AA 桌面端本来就会弹系统通知，微信再响一遍是噪音；锁屏、离开 3 分钟以上才推微信。
+`onlyWhenAway` 默认开启：发推送前读本机键鼠空闲时间（`ioreg` 的 `HIDIdleTime`），空闲不足 `idleSeconds`（默认 180 秒）就直接跳过——人在电脑前，AA 桌面端本来就会弹系统通知，手机再响一遍是噪音；锁屏、离开 3 分钟以上才推。
 
 AA 没有暴露「手机端在线」的接口（`/api/v2/devices`、`/mobile-connections` 等路径返回的都是前端 HTML），所以用本机空闲时间做代理，不是真的在检测手机。读不到空闲时间时按「不在场」处理，宁可多推。
 
