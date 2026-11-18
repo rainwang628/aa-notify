@@ -36,16 +36,14 @@ LEVELDB_DIR = os.path.join(AA_SUPPORT, "Local Storage", "leveldb")
 SERVER = "https://web.agents-anywhere.com"
 UA = "aa-notify/1.0"
 
-# 统一推送后台（2026-11-17 起 channel=gateway 时使用）
-DEFAULT_NODE = "/Applications/DS Bot.app/Contents/Resources/primary-runtime/dependencies/node/bin/node"
-DEFAULT_GATEWAY_SCRIPT = os.path.expanduser("~/rain/projs/services/push-gateway/push.mjs")
+# 统一推送入口（2026-11-18 起：所有信源只调 notify，node 与网关路径由它内部定位）
+DEFAULT_NOTIFY = os.path.expanduser("~/rain/projs/services/push-gateway/notify")
 
 BUSY_STATUSES = {"running", "waiting", "pending", "stopping"}
 
 DEFAULT_CONFIG = {
     "channel": "gateway",
-    "gatewayScript": DEFAULT_GATEWAY_SCRIPT,
-    "gatewayNode": DEFAULT_NODE,
+    "notifyScript": DEFAULT_NOTIFY,
     "linkBase": "https://web.agents-anywhere.com",
     "pollSeconds": 20,
     "quietHours": {"start": "00:00", "end": "08:00"},
@@ -281,15 +279,14 @@ def session_handled(api: "Api", session_id: str) -> bool:
 
 def send_push(config: dict, title: str, content: str, kind: str = "info",
               cancel_if: str = "") -> tuple[bool, str]:
-    """统一推送后台：~/rain/projs/services/push-gateway/push.mjs。
+    """统一推送入口：~/rain/projs/services/push-gateway/notify。
 
     approval / error → todo（先到通知栏，到点补微信；审批类带 cancel_if，处理掉就不补）
     completed        → info（只到通知栏）
     """
-    script = os.path.expanduser(str(config.get("gatewayScript") or DEFAULT_GATEWAY_SCRIPT))
-    node = str(config.get("gatewayNode") or DEFAULT_NODE)
+    notify = os.path.expanduser(str(config.get("notifyScript") or DEFAULT_NOTIFY))
     push_kind = "todo" if kind in ("approval", "error") else "info"
-    command = [node, script, "--title", title, "--body", content, "--group", "aa", "--kind", push_kind]
+    command = [notify, "--title", title, "--body", content, "--group", "aa", "--kind", push_kind]
     if cancel_if:
         command += ["--cancel-if", cancel_if]
     try:
@@ -297,7 +294,7 @@ def send_push(config: dict, title: str, content: str, kind: str = "info",
             command, capture_output=True, text=True, timeout=40,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        return False, "gateway 调用失败：%s" % error
+        return False, "notify 调用失败：%s" % error
     detail = ((result.stdout or "") + (result.stderr or "")).strip()[:300]
     return result.returncode == 0, detail
 

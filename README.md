@@ -22,7 +22,7 @@
 cp config.example.json config.json
 ```
 
-`channel` 只有 `gateway`（2026-11-17 起）：直连 PushPlus／wxpusher／serverchan 的旧通道已删除，凭据只留在推送网关一处。网关地址与 node 路径由 `gatewayScript`、`gatewayNode` 指定，默认指向 `~/rain/projs/services/push-gateway/push.mjs`。
+`channel` 只有 `gateway`（2026-11-17 起）：直连 PushPlus／wxpusher／serverchan 的旧通道已删除，凭据只留在推送网关一处。推送统一走 `~/rain/projs/services/push-gateway/notify`；可用配置项 `notifyScript` 覆盖路径。旧配置里的 `gatewayScript`／`gatewayNode` 不再读取。
 
 推送分两类（细节见 `~/rain/projs/agent-rules/docs/push-gateway.md`）：
 

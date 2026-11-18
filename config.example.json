@@ -1,7 +1,6 @@
 {
   "channel": "gateway",
-  "gatewayScript": "~/rain/projs/services/push-gateway/push.mjs",
-  "gatewayNode": "/Applications/DS Bot.app/Contents/Resources/primary-runtime/dependencies/node/bin/node",
+  "notifyScript": "~/rain/projs/services/push-gateway/notify",
   "linkBase": "https://web.agents-anywhere.com",
   "pollSeconds": 20,
   "events": {
